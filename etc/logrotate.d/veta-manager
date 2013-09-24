@@ -1,0 +1,7 @@
+/var/log/nova/veta-manager.log {
+    daily
+    missingok
+    compress
+    delaycompress
+    notifempty
+}
