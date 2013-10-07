@@ -112,44 +112,60 @@ def schedule_list(request, instance_id):
 
 def schedule_create(request, instance_id, frequency, retention):
     client = novaclient(request)
-    backups = client.veta.backup_schedule_add(
+    schedules = client.veta.backup_schedule_add(
         client.servers.get(instance_id), frequency, retention)
 
-    return backups
+    return schedules
 
 def schedule_enable(request, instance_id, schedule_id):
     client = novaclient(request)
-    backups = client.veta.backup_schedule_enable(
+    schedules = client.veta.backup_schedule_enable(
         client.servers.get(instance_id), schedule_id)
 
-    return backups
+    return schedules
 
 def schedule_disable(request, instance_id, schedule_id):
     client = novaclient(request)
-    backups = client.veta.backup_schedule_disable(
+    schedules = client.veta.backup_schedule_disable(
         client.servers.get(instance_id), schedule_id)
 
-    return backups
+    return schedules
 
 def schedule_update(request, instance_id, schedule_id,
         frequency, retention):
     client = novaclient(request)
-    backups = client.veta.backup_schedule_update(
+    schedules = client.veta.backup_schedule_update(
         client.servers.get(instance_id), schedule_id,
             frequency, retention)
 
-    return backups
+    return schedules
 
 def schedule_delete(request, instance_id, schedule_id):
     client = novaclient(request)
-    backups = client.veta.backup_schedule_delete(
+    schedules = client.veta.backup_schedule_delete(
         client.servers.get(instance_id), schedule_id)
 
-    return backups
+    return schedules
+
+def populate_backup(client, backup):
+    class Backup(object):
+        def __init__(self, backup_id, name, status):
+            self.id = backup_id
+            self.name = name
+            self.status = status
+
+    # Pull out fields
+    backup_id = backup['uuid']
+    name = backup['name']
+    status = backup['status']
+
+    # Return populated object
+    return Backup(backup_id, name, status)
 
 def backup_list(request, instance_id, schedule_id=None):
     client = novaclient(request)
     backups = client.veta.backup_schedule_list_backups(
         client.servers.get(instance_id), schedule_id)
 
-    return backups
+    return [populate_backup(client, backup) \
+            for backup in backups]

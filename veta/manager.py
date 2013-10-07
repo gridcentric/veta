@@ -23,7 +23,6 @@ does periodic processing of backup tasks.
 import datetime
 from copy import copy
 
-from nova import context as novacontext
 from nova import exception
 from nova import manager
 from nova.openstack.common import jsonutils
@@ -33,8 +32,8 @@ from nova.openstack.common.gettextutils import _
 
 from oslo.config import cfg
 
+from . import driver
 from . import meta
-from cobalt.nova import api
 
 LOG = logging.getLogger('nova.veta.manager')
 CONF = cfg.CONF
@@ -54,8 +53,8 @@ def _nearest_minute(dt):
 
 class VetaManager(manager.SchedulerDependentManager):
     def __init__(self, *args, **kwargs):
-        self.cobalt_api = api.API()
         super(VetaManager, self).__init__(service_name="veta", *args, **kwargs)
+        self.driver = driver.load_snapshot_driver()
 
     @manager.periodic_task(spacing=CONF.veta_poll_frequency)
     def _run_periodic_tasks(self, context):
@@ -76,14 +75,14 @@ class VetaManager(manager.SchedulerDependentManager):
             uuid = instance['uuid']
 
             # Get backup schedules
-            instance_metadata = self._instance_metadata_get(instance)
-            schedules = jsonutils.loads(instance_metadata.get(
-                                            meta.BACKUP_SCHEDULE_KEY, '[]'))
+            schedules = self.driver.instance_backup_schedule(context, uuid)
 
             # Get backups
-            filters = { 'metadata' : { meta.BACKUP_FOR_KEY: uuid } }
-            backups = self.db.instance_get_all_by_filters(context,
-                                                          filters)
+            backups = self.driver.instance_backups(context, uuid)
+
+            # Sort backups by creation time, descending
+            backups = sorted(backups, key=lambda b: b[meta.BACKUP_AT_KEY],
+                             reverse=True)
 
             # Trigger new backups for instance
             self._trigger_instance_backups(context, instance, schedules,
@@ -183,12 +182,11 @@ class VetaManager(manager.SchedulerDependentManager):
         return True
 
     def _backup_metadata_get(self, backup):
-        backup_metadata = self._instance_metadata_get(backup)
         backup_ts = timeutils.parse_strtime(
-                        backup_metadata.get(meta.BACKUP_AT_KEY))
-        backup_for = backup_metadata.get(meta.BACKUP_FOR_KEY)
+                        backup.get(meta.BACKUP_AT_KEY))
+        backup_for = backup.get(meta.BACKUP_FOR_KEY)
         satisfies = jsonutils.loads(
-            backup_metadata.get(meta.BACKUP_SATISFIES_KEY, '[]'))
+            backup.get(meta.BACKUP_SATISFIES_KEY, '[]'))
         return (backup_ts, backup_for, satisfies)
 
     def _schedule_metadata_get(self, schedule):
@@ -198,24 +196,24 @@ class VetaManager(manager.SchedulerDependentManager):
                 schedule[meta.SCHEDULE_ACTIVE_KEY])
 
     def _create_backup(self, context, instance, backups_needed, ts):
-        instance_uuid = instance['uuid']
-        backup_context = novacontext.RequestContext(instance['user_id'],
-                                                    instance['project_id'])
         backup_ts = timeutils.strtime(at=ts)
         backup_name = "%s-backup-%s" % (instance['display_name'],
                                         backup_ts)
-        backup = self.cobalt_api.bless_instance(backup_context, instance_uuid,
-                    params={ "name" : backup_name })
-        backup_uuid = backup['uuid']
-        LOG.info(_("Created backup with uuid %s for schedules %s" % \
-                (backup_uuid, backups_needed)))
         metadata = {
             meta.BACKUP_AT_KEY : backup_ts,
-            meta.BACKUP_FOR_KEY : instance_uuid,
+            meta.BACKUP_FOR_KEY : instance['uuid'],
             meta.BACKUP_SATISFIES_KEY : jsonutils.dumps(backups_needed)
         }
-        self.db.instance_metadata_update(context, backup_uuid,
-                                         metadata, False)
+
+        try:
+            backup = self.driver.create_snapshot(context, instance,
+                                                 name=backup_name,
+                                                 metadata=metadata)
+            LOG.info(_("Created backup with uuid %s" % backup['uuid']))
+        except:
+            LOG.exception(
+                _("Couldn't create backup for instance %s, will retry" % \
+                    instance['uuid']))
 
     def _update_backup_satisfies(self, context, backup, uuids,
                                  clean=False):
@@ -226,8 +224,8 @@ class VetaManager(manager.SchedulerDependentManager):
         metadata = {
             meta.BACKUP_SATISFIES_KEY : jsonutils.dumps(uuids)
         }
-        self.db.instance_metadata_update(context, backup['uuid'],
-                                         metadata, False)
+        self.driver.backup_metadata_update(context, backup['uuid'],
+                                           metadata)
 
     def _prune_instance_backups(self, context, instance, schedules,
                                 backups, now):
@@ -278,18 +276,9 @@ class VetaManager(manager.SchedulerDependentManager):
 
     def _discard_backup(self, context, backup):
         backup_uuid = backup['uuid']
-        backup_context = novacontext.RequestContext(backup['user_id'],
-                                                    backup['project_id'])
         try:
-            self.cobalt_api.discard_instance(backup_context, backup_uuid)
+            self.driver.discard_snapshot(context, backup_uuid)
             LOG.info(_("Discarded backup with uuid %s" % backup_uuid))
         except:
-            LOG.info(_("Cannot discard backup with uuid %s, will retry" % \
-                       backup_uuid))
-
-    def _instance_metadata_get(self, instance_ref):
-        '''Returns {key:value} dict of metadata from instance_ref.'''
-        result = {}
-        for record in instance_ref.get('metadata', []):
-            result[record['key']] = record['value']
-        return result
+            LOG.exception(_("Cannot discard backup with uuid %s, will retry" % \
+                          backup_uuid))
