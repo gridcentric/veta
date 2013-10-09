@@ -167,19 +167,10 @@ class SchedulesTable(BasicSchedulesTable):
         row_actions = (EditSchedule, EnableSchedule,
                        DisableSchedule, DeleteSchedule)
 
-def get_backup_status(backup):
-    mapping = {
-        'BLESSED' : 'Complete',
-        'ERROR' : 'Error'
-    }
-
-    return mapping.get(backup.status, "In Progress")
-
 class BackupsTable(tables.DataTable):
     name = tables.Column("name",
-                         verbose_name=_("Backup name"),
-                         link=("horizon:project:instances:detail"))
-    status = tables.Column(get_backup_status,
+                         verbose_name=_("Backup name"))
+    status = tables.Column("status",
                            verbose_name=_("Status"))
 
     class Meta:
