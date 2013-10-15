@@ -32,7 +32,7 @@ Setting up the manager
 Veta comes with an upstart script for automatically starting on upstart-based
 systems. To start veta manually, use:
 
-    start veta
+    sudo start veta-manager
 
 Setting up the dashboard
 ------------------------
@@ -56,7 +56,7 @@ To set the backup snapshot driver, you must add the option `veta_snapshot_driver
 
 The following drivers are included with Veta:
 
-* `novadriver.NovaSnapshotDriver` - uses Nova "snapshots" (i.e. the output of `nova image-create` for instance backups.
+* `novadriver.NovaSnapshotDriver` (default) - uses Nova "snapshots" (i.e. the output of `nova image-create` for instance backups.
 * `cobaltdriver.CobaltSnapshotDriver` - uses [Cobalt live images](https://github.com/gridcentric/cobalt) for instance backups.
 
 For example, to use the Cobalt driver, append the following to `/etc/nova/nova.conf`:
