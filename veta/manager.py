@@ -23,12 +23,15 @@ does periodic processing of backup tasks.
 import datetime
 from copy import copy
 
+from nova import context as novacontext
 from nova import exception
 from nova import manager
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
 from nova.openstack.common.gettextutils import _
+
+from keystoneclient.v2_0 import client as keystone
 
 from oslo.config import cfg
 
@@ -44,7 +47,28 @@ veta_opts = [
                 help='The frequency with which the veta'
                      ' service should wake up and perform peroidic tasks'
                      ' (such as triggering new backups or cleaning up'
-                     ' old backups.')]
+                     ' old backups.'),
+                cfg.StrOpt('veta_auth_strategy',
+                default='none',
+                help='The authorization strategy that the veta'
+                     ' manager should use to access nova/glance.'
+                     ' Should be "none" or "keystone".'),
+                cfg.StrOpt('veta_auth_user',
+                default='none',
+                help='The Veta service user, if the Veta'
+                     ' authorization strategy is "keystone".'),
+                cfg.StrOpt('veta_auth_tenant',
+                default='none',
+                help='The Veta service tenant, if the Veta'
+                     ' authorization strategy is "keystone".'),
+                cfg.StrOpt('veta_auth_password',
+                default='none',
+                help='The Veta service password, if the Veta'
+                     ' authorization strategy is "keystone".'),
+                cfg.StrOpt('veta_auth_url',
+                default='http://127.0.0.1:5000/v2.0',
+                help='The Keystone auth URL, if the Veta'
+                     ' authorization strategy is "keystone".')]
 CONF.register_opts(veta_opts)
 
 # Round (down) to nearest minute
@@ -54,10 +78,36 @@ def _nearest_minute(dt):
 class VetaManager(manager.SchedulerDependentManager):
     def __init__(self, *args, **kwargs):
         super(VetaManager, self).__init__(service_name="veta", *args, **kwargs)
+        self._setup_auth()
         self.driver = driver.load_snapshot_driver()
+
+    def _setup_auth(self):
+        # If we are using Keystone,
+        if CONF.veta_auth_strategy == 'keystone':
+            # Make sure the glance client will know
+            if 'auth_strategy' not in CONF or CONF.auth_strategy != 'keystone':
+                CONF.auth_strategy = 'keystone'
+
+            # Get a keystone client
+            self.keystone = keystone.Client(username=CONF.veta_auth_user,
+                                            tenant_name=CONF.veta_auth_tenant,
+                                            password=CONF.veta_auth_password,
+                                            auth_url=CONF.veta_auth_url)
+
+    def _generate_context(self, context):
+        # If we're using keystone,
+        if CONF.veta_auth_strategy == 'keystone':
+            # Generate a request context that has an auth token
+            context = novacontext.RequestContext(None, None,
+                auth_token=self.keystone.auth_token,
+                is_admin=True)
+
+        return context
 
     @manager.periodic_task(spacing=CONF.veta_poll_frequency)
     def _run_periodic_tasks(self, context):
+        context = self._generate_context(context)
+        LOG.debug("Periodic tasks running with context %s" % context.to_dict())
         self._run_backups(context)
 
     def _run_backups(self, context):

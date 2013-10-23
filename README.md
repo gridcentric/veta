@@ -29,6 +29,25 @@ Next, you should restart the API server.
 Setting up the manager
 ----------------------
 
+If you will be using Keystone authentication for Veta (e.g. if your Glance
+installation is using Keystone to authenticate requests), you will need
+to create a service account for Veta:
+
+    keystone user-create --name veta --tenant-id <SERVICE TENANT ID> --pass <VETA SERVICE PASSWORD>
+    keystone user-role-add --user-id <VETA USER ID> --tenant-id <SERVICE TENANT ID> --role-id <ADMIN ROLE ID>
+
+(See the `keystone tenant-list` and `keystone user-role-list` commands for help on getting the appropriate `<SERVICE TENANT ID>` and `<ADMIN ROLE ID>` parameters.)
+
+You will then need to add the following options to `/etc/nova/veta-manager.conf`, under
+the `[DEFAULT]` section:
+
+    [DEFAULT]
+    veta_auth_strategy=keystone
+    veta_auth_user=veta
+    veta_auth_tenant=<SERVICE TENANT NAME>
+    veta_auth_password=<VETA SERVICE PASSWORD>
+    veta_auth_url=<KEYSTONE URL> # Defaults to https://127.0.0.1:5000/v2.0
+
 Veta comes with an upstart script for automatically starting on upstart-based
 systems. To start veta manually, use:
 

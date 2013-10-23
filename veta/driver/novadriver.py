@@ -111,15 +111,21 @@ class NovaSnapshotDriver(driver.SnapshotDriver):
         return map(lambda b: self._clean_backup_dict(b), backups)
 
     def create_snapshot(self, context, instance, name, metadata=None):
-        backup_context = novacontext.RequestContext(instance['user_id'],
-                                                    instance['project_id'])
+        properties = {
+            'instance_uuid' : instance['uuid'],
+            'image_type' : 'snapshot'
+        }
+        properties.update(metadata or {})
+        image_meta = {
+            'owner' : instance['project_id'],
+            'name' : name,
+            'is_public' : False,
+            'properties' : properties
+        }
+        sent_meta = self.glance.create(context, image_meta)
         return self._clean_backup_dict(
-            self.nova.snapshot(backup_context, instance, name=name,
-                               extra_properties=metadata))
+            self.nova.snapshot(context, instance, name=name,
+                               image_id=sent_meta['id']))
 
     def discard_snapshot(self, context, backup_uuid):
-        backup = self.glance.show(context, backup_uuid)
-        backup_context = novacontext.RequestContext(
-                                            backup['properties']['user_id'],
-                                            backup['properties']['owner_id'])
-        return self.glance.delete(backup_context, backup_uuid)
+        return self.glance.delete(context, backup_uuid)
